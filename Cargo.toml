@@ -1,0 +1,83 @@
+[package]
+name = "blackout"
+version = "1.0.0"
+edition = "2021"
+authors = ["Alex Shink"]
+description = "Cinema blackout for every monitor except the one you pick"
+repository = "https://github.com/alexshink/blackout"
+license = "MIT"
+publish = false
+
+[build-dependencies]
+png = "0.17"
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
+[dev-dependencies]
+png = "0.17"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+    "Win32_Security",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+    "Win32_UI_Controls",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_System_Com",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Globalization",
+] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = [
+    "NSApplication",
+    "NSCell",
+    "NSColor",
+    "NSEvent",
+    "NSGraphics",
+    "NSButton",
+    "NSImage",
+    "NSMenu",
+    "NSMenuItem",
+    "NSPanel",
+    "NSResponder",
+    "NSScreen",
+    "NSStatusBar",
+    "NSStatusItem",
+    "NSView",
+    "NSVisualEffectView",
+    "NSWindow",
+] }
+objc2-foundation = { version = "0.3", features = [
+    "NSArray",
+    "NSEnumerator",
+    "NSGeometry",
+    "NSData",
+    "NSString",
+    "NSThread",
+] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+x11rb = { version = "0.13", features = ["allow-unsafe-code", "randr", "render"] }
+embedded-graphics = "0.8"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

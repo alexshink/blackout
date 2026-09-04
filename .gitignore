@@ -1,0 +1,7 @@
+/target
+**/*.rs.bk
+.idea/
+.vscode/
+*.pdb
+/blackout_for_build
+/releases
