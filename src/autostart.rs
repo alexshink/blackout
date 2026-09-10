@@ -338,7 +338,8 @@ mod platform {
         if !plist_points_to(&body, &ours) {
             return Ok(());
         }
-        fs::remove_file(&path).map_err(|_| "не удалось удалить LaunchAgent")
+        fs::remove_file(&path).map_err(|_| "не удалось удалить LaunchAgent")?;
+        Ok(())
     }
 
     fn plist_points_to(body: &str, ours: &std::path::Path) -> bool {

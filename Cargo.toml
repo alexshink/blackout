@@ -55,7 +55,10 @@ objc2-app-kit = { version = "0.3", features = [
     "NSResponder",
     "NSScreen",
     "NSStatusBar",
+    "NSStatusBarButton",
     "NSStatusItem",
+    "NSBezierPath",
+    "NSTrackingArea",
     "NSView",
     "NSVisualEffectView",
     "NSWindow",
@@ -65,8 +68,10 @@ objc2-foundation = { version = "0.3", features = [
     "NSEnumerator",
     "NSGeometry",
     "NSData",
+    "NSDictionary",
     "NSString",
     "NSThread",
+    "NSTimer",
 ] }
 
 [target.'cfg(unix)'.dependencies]

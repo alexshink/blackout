@@ -1,6 +1,6 @@
 #!/bin/sh
-# Сборка на macOS: кладёт release-бинарник в Blackout.app с иконкой.
-# Рисунки не нужны — .icns пишет cargo build в target/blackout.icns.
+# macOS: wrap the release binary in Blackout.app with the generated icon.
+# No artwork to draw - cargo build writes target/blackout.icns.
 set -e
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 bin="$root/target/release/blackout"
@@ -18,9 +18,9 @@ fi
 
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-cp "$bin" "$app/Contents/MacOS/blackout"
-cp "$icns" "$app/Contents/Resources/AppIcon.icns"
-chmod +x "$app/Contents/MacOS/blackout"
+install -m 0755 "$bin" "$app/Contents/MacOS/blackout"
+ditto "$icns" "$app/Contents/Resources/AppIcon.icns"
+printf 'APPL????' > "$app/Contents/PkgInfo"
 
 cat > "$app/Contents/Info.plist" <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -29,12 +29,14 @@ cat > "$app/Contents/Info.plist" <<'EOF'
 <dict>
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
+    <key>CFBundleDisplayName</key>
+    <string>Blackout</string>
     <key>CFBundleExecutable</key>
     <string>blackout</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
-    <string>local.blackout</string>
+    <string>app.blackout.menu</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
@@ -43,14 +45,26 @@ cat > "$app/Contents/Info.plist" <<'EOF'
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
     <string>1.0.0</string>
+    <key>CFBundleSignature</key>
+    <string>????</string>
+    <key>CFBundleSupportedPlatforms</key>
+    <array>
+        <string>MacOSX</string>
+    </array>
     <key>CFBundleVersion</key>
     <string>1.0.0</string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.utilities</string>
     <key>LSMinimumSystemVersion</key>
-    <string>10.13</string>
+    <string>11.0</string>
     <key>LSUIElement</key>
     <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSSupportsAutomaticTermination</key>
+    <false/>
+    <key>NSSupportsSuddenTermination</key>
+    <false/>
 </dict>
 </plist>
 EOF

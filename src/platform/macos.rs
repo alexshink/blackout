@@ -4,18 +4,17 @@ use std::sync::OnceLock;
 
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
-use objc2::{
-    class, define_class, msg_send, AllocAnyThread, ClassType, DefinedClass, MainThreadOnly,
-};
+use objc2::{class, define_class, msg_send, AnyThread, DefinedClass, MainThreadOnly};
 use objc2_app_kit::{
     NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSBackingStoreType,
     NSColor, NSControlStateValueOff, NSControlStateValueOn, NSEvent, NSImage, NSMenu, NSMenuItem,
-    NSPanel, NSScreen, NSStatusBar, NSStatusItem, NSView, NSVisualEffectBlendingMode,
-    NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindowCollectionBehavior,
-    NSWindowSharingType, NSWindowStyleMask,
+    NSPanel, NSScreen, NSStatusBar, NSStatusItem, NSTrackingArea, NSTrackingAreaOptions, NSView,
+    NSVisualEffectBlendingMode, NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView,
+    NSWindowCollectionBehavior, NSWindowSharingType, NSWindowStyleMask,
 };
 use objc2_foundation::{
-    MainThreadMarker, NSData, NSNotification, NSPoint, NSRect, NSSize, NSString,
+    MainThreadMarker, NSData, NSNotification, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString,
+    NSTimer,
 };
 
 use crate::app::{Action, Logic, Mode, PickKey};
@@ -118,6 +117,11 @@ define_class!(
             true
         }
 
+        #[unsafe(method(isFlipped))]
+        fn is_flipped(&self) -> bool {
+            true
+        }
+
         #[unsafe(method(keyDown:))]
         fn key_down(&self, event: Option<&NSEvent>) {
             if let Some(event) = event {
@@ -145,17 +149,13 @@ define_class!(
                 return;
             };
             unsafe {
-                let point = event.locationInWindow();
-                let w = self.bounds().size.width;
-                if point.y >= 12.0 && point.y <= 52.0 {
-                    let save = point.x >= w / 2.0 - 184.0 && point.x < w / 2.0 - 8.0;
-                    let cancel = point.x >= w / 2.0 + 8.0 && point.x <= w / 2.0 + 184.0;
-                    if save {
-                        commit_bind(&mut *self.ivars().state);
-                    } else if cancel {
+                match popup_button_hit(self, event) {
+                    Some(true) => commit_bind(&mut *self.ivars().state),
+                    Some(false) => {
                         close_bind(&mut *self.ivars().state);
                         install_hotkey(&mut *self.ivars().state);
                     }
+                    None => {}
                 }
             }
         }
@@ -180,44 +180,47 @@ define_class!(
                 );
                 objc2_app_kit::NSBezierPath::fillRect(inset);
                 let hint = NSString::from_str(&state.config.ui_lang().bind_hint());
-                let mut hint_rect = bounds;
-                hint_rect.size.height -= 120.0;
-                hint_rect.origin.y += 120.0;
-                draw_bind_text(&hint, hint_rect, 0.94, 0.94, 0.94);
+                let hint_rect = NSRect::new(
+                    NSPoint::new(24.0, 16.0),
+                    NSSize::new(bounds.size.width - 48.0, 100.0),
+                );
+                draw_popup_text(&hint, hint_rect, 0.94, 0.94, 0.94, 14.0, true, false);
                 let preview = if state.bind_preview.is_empty() {
                     "..."
                 } else {
                     state.bind_preview.as_str()
                 };
                 let combo = NSString::from_str(preview);
-                let mut combo_rect = bounds;
-                combo_rect.origin.y = 64.0;
-                combo_rect.size.height = 48.0;
+                let combo_rect = NSRect::new(
+                    NSPoint::new(24.0, bounds.size.height - 112.0),
+                    NSSize::new(bounds.size.width - 48.0, 48.0),
+                );
                 if state.bind_draft.is_some() {
-                    draw_bind_text(
+                    draw_popup_text(
                         &combo,
                         combo_rect,
                         0x3D as f64 / 255.0,
                         0xDC as f64 / 255.0,
                         0x97 as f64 / 255.0,
+                        16.0,
+                        true,
+                        true,
                     );
                 } else {
-                    draw_bind_text(&combo, combo_rect, 0.63, 0.63, 0.63);
+                    draw_popup_text(&combo, combo_rect, 0.63, 0.63, 0.63, 16.0, true, true);
                 }
-                let mid = bounds.size.width / 2.0;
-                let save_btn = NSRect::new(NSPoint::new(mid - 184.0, 12.0), NSSize::new(176.0, 40.0));
-                let cancel_btn = NSRect::new(NSPoint::new(mid + 8.0, 12.0), NSSize::new(176.0, 40.0));
+                let (save_btn, cancel_btn) = popup_button_rects(bounds);
                 stroke_bind_button(save_btn);
                 stroke_bind_button(cancel_btn);
                 let t = state.config.ui_lang().tr();
                 let save = NSString::from_str(t.save_enter);
                 let cancel = NSString::from_str(t.cancel_esc);
                 if state.bind_draft.is_some() {
-                    draw_bind_text(&save, save_btn, 0.94, 0.94, 0.94);
+                    draw_popup_text(&save, save_btn, 0.94, 0.94, 0.94, 13.0, true, true);
                 } else {
-                    draw_bind_text(&save, save_btn, 0.63, 0.63, 0.63);
+                    draw_popup_text(&save, save_btn, 0.63, 0.63, 0.63, 13.0, true, true);
                 }
-                draw_bind_text(&cancel, cancel_btn, 0.94, 0.94, 0.94);
+                draw_popup_text(&cancel, cancel_btn, 0.94, 0.94, 0.94, 13.0, true, true);
             }
         }
     }
@@ -254,6 +257,11 @@ define_class!(
             true
         }
 
+        #[unsafe(method(isFlipped))]
+        fn is_flipped(&self) -> bool {
+            true
+        }
+
         #[unsafe(method(keyDown:))]
         fn key_down(&self, event: Option<&NSEvent>) {
             let Some(event) = event else {
@@ -276,17 +284,13 @@ define_class!(
                 return;
             };
             unsafe {
-                let point = event.locationInWindow();
-                let w = self.bounds().size.width;
-                if point.y >= 12.0 && point.y <= 52.0 {
-                    let ok = point.x >= w / 2.0 - 184.0 && point.x < w / 2.0 - 8.0;
-                    let cancel = point.x >= w / 2.0 + 8.0 && point.x <= w / 2.0 + 184.0;
-                    if ok {
-                        commit_wipe(&mut *self.ivars().state);
-                    } else if cancel {
+                match popup_button_hit(self, event) {
+                    Some(true) => commit_wipe(&mut *self.ivars().state),
+                    Some(false) => {
                         close_wipe(&mut *self.ivars().state);
                         install_hotkey(&mut *self.ivars().state);
                     }
+                    None => {}
                 }
             }
         }
@@ -312,42 +316,47 @@ define_class!(
                 objc2_app_kit::NSBezierPath::fillRect(inset);
                 let lang = state.config.ui_lang();
                 let title = NSString::from_str(lang.tr().wipe_title);
-                let mut title_rect = bounds;
-                title_rect.origin.y = bounds.size.height - 56.0;
-                title_rect.size.height = 36.0;
-                draw_bind_text(&title, title_rect, 0.94, 0.94, 0.94);
+                let title_rect = NSRect::new(
+                    NSPoint::new(24.0, 16.0),
+                    NSSize::new(bounds.size.width - 48.0, 36.0),
+                );
+                draw_popup_text(&title, title_rect, 0.94, 0.94, 0.94, 16.0, true, true);
                 let body = NSString::from_str(&crate::purge::dialog_body(lang));
-                let mut body_rect = bounds;
-                body_rect.origin.x = 24.0;
-                body_rect.origin.y = 72.0;
-                body_rect.size.width -= 48.0;
-                body_rect.size.height = bounds.size.height - 140.0;
-                draw_bind_text(&body, body_rect, 0.94, 0.94, 0.94);
+                let body_rect = NSRect::new(
+                    NSPoint::new(24.0, 56.0),
+                    NSSize::new(bounds.size.width - 48.0, bounds.size.height - 140.0),
+                );
+                draw_popup_text(&body, body_rect, 0.94, 0.94, 0.94, 13.0, true, false);
                 if !state.wipe_error.is_empty() {
                     let err = NSString::from_str(&state.wipe_error);
-                    let mut err_rect = bounds;
-                    err_rect.origin.y = 56.0;
-                    err_rect.size.height = 20.0;
-                    draw_bind_text(&err, err_rect, 0.94, 0.31, 0.31);
+                    let err_rect = NSRect::new(
+                        NSPoint::new(24.0, bounds.size.height - 76.0),
+                        NSSize::new(bounds.size.width - 48.0, 20.0),
+                    );
+                    draw_popup_text(&err, err_rect, 0.94, 0.31, 0.31, 12.0, true, true);
                 }
-                let mid = bounds.size.width / 2.0;
-                let ok_btn = NSRect::new(NSPoint::new(mid - 184.0, 12.0), NSSize::new(176.0, 40.0));
-                let cancel_btn = NSRect::new(NSPoint::new(mid + 8.0, 12.0), NSSize::new(176.0, 40.0));
+                let (ok_btn, cancel_btn) = popup_button_rects(bounds);
                 stroke_bind_button(ok_btn);
                 stroke_bind_button(cancel_btn);
-                draw_bind_text(
+                draw_popup_text(
                     &NSString::from_str(lang.tr().wipe_confirm),
                     ok_btn,
                     0.94,
                     0.94,
                     0.94,
+                    13.0,
+                    true,
+                    true,
                 );
-                draw_bind_text(
+                draw_popup_text(
                     &NSString::from_str(lang.tr().cancel_esc),
                     cancel_btn,
                     0.94,
                     0.94,
                     0.94,
+                    13.0,
+                    true,
+                    true,
                 );
             }
         }
@@ -385,6 +394,11 @@ define_class!(
             true
         }
 
+        #[unsafe(method(isFlipped))]
+        fn is_flipped(&self) -> bool {
+            true
+        }
+
         #[unsafe(method(keyDown:))]
         fn key_down(&self, event: Option<&NSEvent>) {
             let Some(event) = event else {
@@ -404,20 +418,15 @@ define_class!(
                 return;
             };
             unsafe {
-                let point = event.locationInWindow();
-                let w = self.bounds().size.width;
-                if point.y >= 12.0 && point.y <= 52.0 {
-                    let github = point.x >= w / 2.0 - 184.0 && point.x < w / 2.0 - 8.0;
-                    let close = point.x >= w / 2.0 + 8.0 && point.x <= w / 2.0 + 184.0;
-                    if github {
-                        crate::about::open_github();
-                    } else if close {
-                        close_about(&mut *self.ivars().state);
-                    }
-                } else {
-                    let link_y = 72.0;
-                    if point.y >= link_y && point.y <= link_y + 28.0 {
-                        crate::about::open_github();
+                match popup_button_hit(self, event) {
+                    Some(true) => crate::about::open_github(),
+                    Some(false) => close_about(&mut *self.ivars().state),
+                    None => {
+                        let point = popup_view_point(self, event);
+                        let h = self.bounds().size.height;
+                        if point.y >= h - 100.0 && point.y <= h - 72.0 {
+                            crate::about::open_github();
+                        }
                     }
                 }
             }
@@ -441,81 +450,111 @@ define_class!(
                     NSSize::new(bounds.size.width - 4.0, bounds.size.height - 4.0),
                 );
                 objc2_app_kit::NSBezierPath::fillRect(inset);
-                let mut title_rect = bounds;
-                title_rect.origin.y = bounds.size.height - 62.0;
-                title_rect.size.height = 40.0;
-                draw_bind_text(
+                let title_rect = NSRect::new(
+                    NSPoint::new(24.0, 16.0),
+                    NSSize::new(bounds.size.width - 48.0, 36.0),
+                );
+                draw_popup_text(
                     &NSString::from_str(crate::about::NAME),
                     title_rect,
                     0x3D as f64 / 255.0,
                     0xDC as f64 / 255.0,
                     0x97 as f64 / 255.0,
+                    20.0,
+                    true,
+                    true,
                 );
-                let mut line = bounds;
-                line.origin.y = bounds.size.height - 96.0;
-                line.size.height = 26.0;
+                let mut line = NSRect::new(
+                    NSPoint::new(24.0, 56.0),
+                    NSSize::new(bounds.size.width - 48.0, 24.0),
+                );
                 let lang = (*self.ivars().state).config.ui_lang();
-                draw_bind_text(
+                draw_popup_text(
                     &NSString::from_str(&lang.version_line(crate::about::VERSION)),
                     line,
                     0.94,
                     0.94,
                     0.94,
+                    13.0,
+                    true,
+                    true,
                 );
-                line.origin.y -= 26.0;
-                draw_bind_text(
+                line.origin.y += 24.0;
+                draw_popup_text(
                     &NSString::from_str(&lang.author_line(crate::about::AUTHOR)),
                     line,
                     0.94,
                     0.94,
                     0.94,
+                    13.0,
+                    true,
+                    true,
                 );
-                line.origin.y -= 18.0;
-                line.size.height = 18.0;
+                line.origin.y += 26.0;
+                line.size.height = 16.0;
                 for part in lang.credit_lines() {
-                    draw_about_text(
+                    draw_popup_text(
                         &NSString::from_str(part),
                         line,
                         0.47,
                         0.47,
                         0.47,
                         11.0,
+                        true,
+                        true,
                     );
-                    line.origin.y -= 18.0;
+                    line.origin.y += 16.0;
                 }
-                let mut license = bounds;
-                license.origin.y = 98.0;
-                license.size.height = 26.0;
-                draw_bind_text(
+                let license = NSRect::new(
+                    NSPoint::new(24.0, bounds.size.height - 124.0),
+                    NSSize::new(bounds.size.width - 48.0, 24.0),
+                );
+                draw_popup_text(
                     &NSString::from_str(&lang.license_line(crate::about::LICENSE)),
                     license,
                     0.94,
                     0.94,
                     0.94,
+                    13.0,
+                    true,
+                    true,
                 );
-                let mut link = bounds;
-                link.origin.y = 72.0;
-                link.size.height = 24.0;
-                draw_bind_text(
+                let link = NSRect::new(
+                    NSPoint::new(24.0, bounds.size.height - 96.0),
+                    NSSize::new(bounds.size.width - 48.0, 24.0),
+                );
+                draw_popup_text(
                     &NSString::from_str(crate::about::GITHUB),
                     link,
                     0x3D as f64 / 255.0,
                     0xDC as f64 / 255.0,
                     0x97 as f64 / 255.0,
+                    13.0,
+                    true,
+                    true,
                 );
-                let mid = bounds.size.width / 2.0;
-                let github_btn =
-                    NSRect::new(NSPoint::new(mid - 184.0, 12.0), NSSize::new(176.0, 40.0));
-                let close_btn = NSRect::new(NSPoint::new(mid + 8.0, 12.0), NSSize::new(176.0, 40.0));
+                let (github_btn, close_btn) = popup_button_rects(bounds);
                 stroke_bind_button(github_btn);
                 stroke_bind_button(close_btn);
-                draw_bind_text(&NSString::from_str("GitHub"), github_btn, 0.94, 0.94, 0.94);
-                draw_bind_text(
+                draw_popup_text(
+                    &NSString::from_str("GitHub"),
+                    github_btn,
+                    0.94,
+                    0.94,
+                    0.94,
+                    13.0,
+                    true,
+                    true,
+                );
+                draw_popup_text(
                     &NSString::from_str(lang.tr().close_esc),
                     close_btn,
                     0.94,
                     0.94,
                     0.94,
+                    13.0,
+                    true,
+                    true,
                 );
             }
         }
@@ -533,6 +572,8 @@ define_class!(
     #[ivars = DelegateIvars]
     struct AppDelegate;
 
+    unsafe impl NSObjectProtocol for AppDelegate {}
+
     unsafe impl NSApplicationDelegate for AppDelegate {
         #[unsafe(method(applicationDidFinishLaunching:))]
         fn did_finish_launching(&self, _notification: &NSNotification) {
@@ -543,18 +584,19 @@ define_class!(
         fn status_toggle(&self, _sender: Option<&objc2::runtime::AnyObject>) {
             unsafe {
                 let state = &mut *self.ivars().state;
-                apply(state, state.logic.on_toggle(cursor_display(state)));
+                let action = state.logic.on_toggle(cursor_display(state));
+                apply(state, action);
             }
         }
 
         #[unsafe(method(statusHotkey:))]
         fn status_hotkey(&self, _sender: Option<&objc2::runtime::AnyObject>) {
-            unsafe {
-                if (*self.ivars().state).wipe.is_some() {
-                    return;
-                }
-                begin_bind(&mut *self.ivars().state);
-            }
+            defer_sel(self, objc2::sel!(openBind:));
+        }
+
+        #[unsafe(method(openBind:))]
+        fn open_bind(&self, _sender: Option<&objc2::runtime::AnyObject>) {
+            unsafe { begin_bind(&mut *self.ivars().state) }
         }
 
         #[unsafe(method(statusSolid:))]
@@ -590,12 +632,27 @@ define_class!(
 
         #[unsafe(method(statusWipe:))]
         fn status_wipe(&self, _sender: Option<&objc2::runtime::AnyObject>) {
+            defer_sel(self, objc2::sel!(openWipe:));
+        }
+
+        #[unsafe(method(openWipe:))]
+        fn open_wipe(&self, _sender: Option<&objc2::runtime::AnyObject>) {
             unsafe { begin_wipe(&mut *self.ivars().state) }
         }
 
         #[unsafe(method(statusAbout:))]
         fn status_about(&self, _sender: Option<&objc2::runtime::AnyObject>) {
+            defer_sel(self, objc2::sel!(openAbout:));
+        }
+
+        #[unsafe(method(openAbout:))]
+        fn open_about(&self, _sender: Option<&objc2::runtime::AnyObject>) {
             unsafe { begin_about(&mut *self.ivars().state) }
+        }
+
+        #[unsafe(method(pollPointer:))]
+        fn poll_pointer(&self, _timer: Option<&NSTimer>) {
+            unsafe { follow_cursor(&mut *self.ivars().state) }
         }
 
         #[unsafe(method(statusLang:))]
@@ -653,6 +710,7 @@ struct MacState {
     wipe_error: String,
     about: Option<Retained<AboutPanel>>,
     delegate: *const AppDelegate,
+    pointer_timer: Option<Retained<NSTimer>>,
 }
 
 static SINGLETON: OnceLock<bool> = OnceLock::new();
@@ -684,6 +742,7 @@ pub fn run() -> Result<(), String> {
         wipe_error: String::new(),
         about: None,
         delegate: std::ptr::null(),
+        pointer_timer: None,
     }));
 
     let app = NSApplication::sharedApplication(mtm);
@@ -694,6 +753,49 @@ pub fn run() -> Result<(), String> {
     app.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
     app.run();
     Ok(())
+}
+
+fn defer_sel(this: &AppDelegate, selector: objc2::runtime::Sel) {
+    unsafe {
+        let _: () = msg_send![
+            this,
+            performSelector: selector,
+            withObject: None::<&objc2::runtime::AnyObject>,
+            afterDelay: 0.0
+        ];
+    }
+}
+
+unsafe fn ensure_pointer_poll(state: &mut MacState) {
+    if state.pointer_timer.is_some() {
+        return;
+    }
+    let Some(delegate) = state.delegate.as_ref() else {
+        return;
+    };
+    state.pointer_timer = Some(
+        NSTimer::scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(
+            0.03,
+            delegate,
+            objc2::sel!(pollPointer:),
+            None,
+            true,
+        ),
+    );
+}
+
+fn stop_pointer_poll(state: &mut MacState) {
+    if let Some(timer) = state.pointer_timer.take() {
+        timer.invalidate();
+    }
+}
+
+fn style_popup(panel: &NSPanel) {
+    panel.setHidesOnDeactivate(false);
+    panel.setFloatingPanel(true);
+    panel.setBecomesKeyOnlyIfNeeded(false);
+    panel.setLevel(1_002);
+    panel.setHasShadow(true);
 }
 
 unsafe fn start(delegate: &AppDelegate, state: &mut MacState) {
@@ -764,6 +866,7 @@ unsafe fn make_panel(
     panel.setOpaque(false);
     panel.setHasShadow(false);
     panel.setIgnoresMouseEvents(false);
+    panel.setAcceptsMouseMovedEvents(true);
     panel.setLevel(1_000); // NSScreenSaverWindowLevel
     panel.setSharingType(NSWindowSharingType::None);
     panel.setBackgroundColor(Some(&NSColor::clearColor()));
@@ -791,30 +894,51 @@ unsafe fn make_view(
     let view: Retained<OverlayView> =
         msg_send![super(alloc), initWithFrame: NSRect::new(NSPoint::new(0.0, 0.0), frame.size)];
     view.setWantsLayer(true);
+    let area = NSTrackingArea::initWithRect_options_owner_userInfo(
+        NSTrackingArea::alloc(),
+        view.bounds(),
+        NSTrackingAreaOptions::MouseEnteredAndExited
+            | NSTrackingAreaOptions::MouseMoved
+            | NSTrackingAreaOptions::ActiveAlways
+            | NSTrackingAreaOptions::InVisibleRect,
+        Some(&*view),
+        None,
+    );
+    view.addTrackingArea(&area);
     view
 }
 
 fn pointer(ivars: &Ivars) {
-    unsafe {
-        let state = &mut *ivars.state;
-        if !state.logic.follow_pointer {
-            let loc = NSEvent::mouseLocation();
-            if let Some(anchor) = state.pointer_anchor {
-                if (loc.x - anchor.x).abs() <= 6.0 && (loc.y - anchor.y).abs() <= 6.0 {
-                    return;
-                }
-            }
-            state.pointer_anchor = None;
-            state.logic.allow_pointer();
-        }
-        apply(state, state.logic.on_pointer(&ivars.display_id.to_string()));
+    unsafe { follow_cursor(&mut *ivars.state) }
+}
+
+fn follow_cursor(state: &mut MacState) {
+    if state.logic.mode != Mode::Pick {
+        return;
     }
+    if !state.logic.follow_pointer {
+        let loc = NSEvent::mouseLocation();
+        if let Some(anchor) = state.pointer_anchor {
+            if (loc.x - anchor.x).abs() <= 6.0 && (loc.y - anchor.y).abs() <= 6.0 {
+                return;
+            }
+        }
+        state.pointer_anchor = None;
+        state.logic.allow_pointer();
+    }
+    let Some(id) = cursor_display(state) else {
+        return;
+    };
+    let action = state.logic.on_pointer(&id);
+    unsafe { apply(state, action) }
 }
 
 fn click(ivars: &Ivars) {
     unsafe {
         let state = &mut *ivars.state;
-        apply(state, state.logic.on_click(&ivars.display_id.to_string()));
+        let id = ivars.display_id.to_string();
+        let action = state.logic.on_click(&id);
+        apply(state, action);
     }
 }
 
@@ -855,29 +979,33 @@ fn paint(view: &OverlayView) {
 }
 
 unsafe fn apply(state: &mut MacState, action: Action) {
-    match action {
+    let rebuild = !matches!(action, Action::None | Action::RefreshPick { .. });
+    match &action {
         Action::None => {}
         Action::HideAll => {
+            stop_pointer_poll(state);
             set_pick_keys(state, false);
             for overlay in &state.overlays {
                 overlay.panel.orderOut(None);
             }
         }
         Action::ShowPick { candidate } | Action::RefreshPick { candidate } => {
+            ensure_pointer_poll(state);
             set_pick_keys(state, true);
             for overlay in &mut state.overlays {
                 present(
                     overlay,
-                    overlay.display_id.to_string() == candidate,
+                    overlay.display_id.to_string() == *candidate,
                     true,
                     state.logic.style,
                 );
             }
         }
         Action::ShowLocked { cinema } => {
+            stop_pointer_poll(state);
             set_pick_keys(state, false);
             for overlay in &mut state.overlays {
-                if overlay.display_id.to_string() == cinema {
+                if overlay.display_id.to_string() == *cinema {
                     overlay.panel.orderOut(None);
                 } else {
                     present(overlay, false, false, state.logic.style);
@@ -885,7 +1013,7 @@ unsafe fn apply(state: &mut MacState, action: Action) {
             }
         }
     }
-    if !matches!(action, Action::None | Action::RefreshPick { .. }) {
+    if rebuild {
         if let Some(delegate) = state.delegate.as_ref() {
             rebuild_status_menu(state, delegate);
         }
@@ -902,8 +1030,10 @@ unsafe fn present(overlay: &mut Overlay, candidate: bool, _pick: bool, style: St
 unsafe fn apply_frost(overlay: &mut Overlay, on: bool) {
     if on {
         if overlay.effect.is_none() {
-            let effect =
-                NSVisualEffectView::alloc(overlay.view.mtm()).initWithFrame(overlay.view.bounds());
+            let effect = NSVisualEffectView::initWithFrame(
+                NSVisualEffectView::alloc(overlay.view.mtm()),
+                overlay.view.bounds(),
+            );
             effect.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
             effect.setMaterial(NSVisualEffectMaterial::FullScreenUI);
             effect.setState(NSVisualEffectState::Active);
@@ -926,7 +1056,7 @@ unsafe fn apply_frost(overlay: &mut Overlay, on: bool) {
 unsafe fn build_status(mtm: MainThreadMarker, state: &mut MacState, delegate: &AppDelegate) {
     let bar = NSStatusBar::systemStatusBar();
     let item = bar.statusItemWithLength(objc2_app_kit::NSSquareStatusItemLength);
-    if let Some(button) = item.button() {
+    if let Some(button) = item.button(mtm) {
         if let Some(image) = status_image(mtm) {
             button.setImage(Some(&image));
             button.setTitle(&NSString::from_str(""));
@@ -954,9 +1084,10 @@ unsafe fn rebuild_status_menu(state: &mut MacState, delegate: &AppDelegate) {
         objc2::sel!(statusToggle:),
         delegate,
     );
-    let solid = add_item(mtm, &menu, t.solid, objc2::sel!(statusSolid:), delegate);
-    let tint = add_item(mtm, &menu, t.tint, objc2::sel!(statusTint:), delegate);
-    let frost = add_item(mtm, &menu, t.frost, objc2::sel!(statusFrost:), delegate);
+    let styles = NSMenu::new(mtm);
+    let solid = add_item(mtm, &styles, t.solid, objc2::sel!(statusSolid:), delegate);
+    let tint = add_item(mtm, &styles, t.tint, objc2::sel!(statusTint:), delegate);
+    let frost = add_item(mtm, &styles, t.frost, objc2::sel!(statusFrost:), delegate);
     solid.setState(if state.logic.style == Style::Solid {
         NSControlStateValueOn
     } else {
@@ -972,6 +1103,10 @@ unsafe fn rebuild_status_menu(state: &mut MacState, delegate: &AppDelegate) {
     } else {
         NSControlStateValueOff
     });
+    let style_item = NSMenuItem::new(mtm);
+    style_item.setTitle(&NSString::from_str(t.style));
+    style_item.setSubmenu(Some(&styles));
+    menu.addItem(&style_item);
     let settings = NSMenu::new(mtm);
     add_item(
         mtm,
@@ -1058,7 +1193,7 @@ unsafe fn redraw_text_panels(state: &MacState) {
 
 fn status_image(_mtm: MainThreadMarker) -> Option<Retained<NSImage>> {
     let data = NSData::with_bytes(crate::icon_png::PNG_32);
-    let image = NSImage::initWithData(&NSImage::alloc(), &data)?;
+    let image = NSImage::initWithData(NSImage::alloc(), &data)?;
     image.setSize(NSSize::new(18.0, 18.0));
     Some(image)
 }
@@ -1072,8 +1207,10 @@ fn add_item(
 ) -> Retained<NSMenuItem> {
     let item = NSMenuItem::new(mtm);
     item.setTitle(&NSString::from_str(title));
-    item.setAction(Some(action));
-    item.setTarget(Some(delegate));
+    unsafe {
+        item.setAction(Some(action));
+        item.setTarget(Some(delegate));
+    }
     menu.addItem(&item);
     item
 }
@@ -1086,6 +1223,10 @@ fn set_style(state: &mut MacState, style: Style, delegate: &AppDelegate) {
         apply(state, action);
         rebuild_status_menu(state, delegate);
     }
+}
+
+fn key_screen(mtm: MainThreadMarker) -> Option<Retained<NSScreen>> {
+    NSScreen::mainScreen(mtm).or_else(|| NSScreen::screens(mtm).iter().next())
 }
 
 fn cursor_display(state: &MacState) -> Option<String> {
@@ -1310,23 +1451,86 @@ unsafe fn stroke_bind_button(rect: NSRect) {
     path.stroke();
 }
 
-unsafe fn draw_bind_text(text: &NSString, rect: NSRect, r: f64, g: f64, b: f64) {
-    let color = NSColor::colorWithCalibratedRed_green_blue_alpha(r, g, b, 1.0);
-    let key = NSString::from_str("NSColor");
-    let attrs: *const std::ffi::c_void =
-        msg_send![class!(NSDictionary), dictionaryWithObject: &*color, forKey: &*key];
-    let _: () = msg_send![text, drawInRect: rect, withAttributes: attrs];
+fn popup_button_rects(bounds: NSRect) -> (NSRect, NSRect) {
+    let mid = bounds.size.width / 2.0;
+    let y = bounds.size.height - 52.0;
+    (
+        NSRect::new(NSPoint::new(mid - 184.0, y), NSSize::new(176.0, 40.0)),
+        NSRect::new(NSPoint::new(mid + 8.0, y), NSSize::new(176.0, 40.0)),
+    )
 }
 
-unsafe fn draw_about_text(text: &NSString, rect: NSRect, r: f64, g: f64, b: f64, size: f64) {
+fn popup_view_point(view: &NSView, event: &NSEvent) -> NSPoint {
+    view.convertPoint_fromView(event.locationInWindow(), None)
+}
+
+fn popup_button_hit(view: &NSView, event: &NSEvent) -> Option<bool> {
+    let point = popup_view_point(view, event);
+    let bounds = view.bounds();
+    let y0 = bounds.size.height - 52.0;
+    let y1 = bounds.size.height - 12.0;
+    if point.y < y0 || point.y > y1 {
+        return None;
+    }
+    let mid = bounds.size.width / 2.0;
+    if point.x >= mid - 184.0 && point.x < mid - 8.0 {
+        Some(true)
+    } else if point.x >= mid + 8.0 && point.x <= mid + 184.0 {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+unsafe fn draw_popup_text(
+    text: &NSString,
+    rect: NSRect,
+    r: f64,
+    g: f64,
+    b: f64,
+    font_size: f64,
+    center: bool,
+    vcenter: bool,
+) {
     let color = NSColor::colorWithCalibratedRed_green_blue_alpha(r, g, b, 1.0);
-    let font: *mut objc2::runtime::AnyObject = msg_send![class!(NSFont), systemFontOfSize: size];
+    let font: *mut objc2::runtime::AnyObject = msg_send![class!(NSFont), systemFontOfSize: font_size];
     let dict: *mut objc2::runtime::AnyObject = msg_send![class!(NSMutableDictionary), dictionary];
     let color_key = NSString::from_str("NSColor");
     let font_key = NSString::from_str("NSFont");
     let _: () = msg_send![dict, setObject: &*color, forKey: &*color_key];
     let _: () = msg_send![dict, setObject: font, forKey: &*font_key];
-    let _: () = msg_send![text, drawInRect: rect, withAttributes: dict];
+    // UsesLineFragmentOrigin | UsesFontLeading — otherwise drawInRect in a
+    // flipped view pins the line to the right edge.
+    const LINE_FRAG: isize = 1 | 2;
+    let used: NSRect = msg_send![
+        text,
+        boundingRectWithSize: NSSize::new(rect.size.width, 10_000.0),
+        options: LINE_FRAG,
+        attributes: dict
+    ];
+    let w = used.size.width.min(rect.size.width).max(1.0);
+    let h = used.size.height.min(rect.size.height).max(1.0);
+    let dest = NSRect::new(
+        NSPoint::new(
+            if center {
+                rect.origin.x + (rect.size.width - w) / 2.0
+            } else {
+                rect.origin.x
+            },
+            if vcenter {
+                rect.origin.y + (rect.size.height - h) / 2.0
+            } else {
+                rect.origin.y
+            },
+        ),
+        NSSize::new(w, h),
+    );
+    let _: () = msg_send![
+        text,
+        drawWithRect: dest,
+        options: LINE_FRAG,
+        attributes: dict
+    ];
 }
 
 unsafe fn begin_bind(state: &mut MacState) {
@@ -1334,7 +1538,9 @@ unsafe fn begin_bind(state: &mut MacState) {
         return;
     }
     close_about(state);
-    if state.bind.is_some() {
+    if let Some(panel) = &state.bind {
+        panel.makeKeyAndOrderFront(None);
+        panel.orderFrontRegardless();
         return;
     }
     if !state.hotkey_ref.is_null() {
@@ -1346,9 +1552,7 @@ unsafe fn begin_bind(state: &mut MacState) {
         state.hotkey_ref = std::ptr::null_mut();
     }
 
-    let screen = NSScreen::mainScreen(state.mtm)
-        .or_else(|| NSScreen::screens(state.mtm).iter().next().cloned());
-    let Some(screen) = screen else {
+    let Some(screen) = key_screen(state.mtm) else {
         install_hotkey(state);
         return;
     };
@@ -1373,7 +1577,7 @@ unsafe fn begin_bind(state: &mut MacState) {
         backing: NSBackingStoreType::Buffered,
         defer: false
     ];
-    panel.setLevel(1_000);
+    style_popup(&panel);
     panel.setTitle(&NSString::from_str(state.config.ui_lang().tr().bind_title));
     let view_alloc = BindView::alloc(state.mtm).set_ivars(BindIvars {
         state: state as *mut MacState,
@@ -1381,7 +1585,9 @@ unsafe fn begin_bind(state: &mut MacState) {
     let view: Retained<BindView> =
         msg_send![super(view_alloc), initWithFrame: NSRect::new(NSPoint::new(0.0, 0.0), size)];
     panel.setContentView(Some(&view));
+    panel.makeFirstResponder(Some(&view));
     panel.makeKeyAndOrderFront(None);
+    panel.orderFrontRegardless();
     state.bind = Some(panel);
 }
 
@@ -1489,7 +1695,7 @@ unsafe fn commit_bind(state: &mut MacState) {
     state.config.save();
     install_hotkey(state);
     if let Some(item) = &state.status {
-        if let Some(button) = item.button() {
+        if let Some(button) = item.button(state.mtm) {
             button.setToolTip(Some(&NSString::from_str("Blackout")));
         }
     }
@@ -1507,13 +1713,15 @@ unsafe fn close_bind(state: &mut MacState) {
 unsafe fn begin_wipe(state: &mut MacState) {
     if let Some(panel) = &state.wipe {
         panel.makeKeyAndOrderFront(None);
+        panel.orderFrontRegardless();
         return;
     }
     close_about(state);
     if state.bind.is_some() {
         close_bind(state);
     }
-    apply(state, state.logic.dismiss());
+    let action = state.logic.dismiss();
+    apply(state, action);
     if !state.hotkey_ref.is_null() {
         #[link(name = "Carbon", kind = "framework")]
         extern "C" {
@@ -1522,9 +1730,7 @@ unsafe fn begin_wipe(state: &mut MacState) {
         let _ = UnregisterEventHotKey(state.hotkey_ref);
         state.hotkey_ref = std::ptr::null_mut();
     }
-    let screen = NSScreen::mainScreen(state.mtm)
-        .or_else(|| NSScreen::screens(state.mtm).iter().next().cloned());
-    let Some(screen) = screen else {
+    let Some(screen) = key_screen(state.mtm) else {
         install_hotkey(state);
         return;
     };
@@ -1546,7 +1752,7 @@ unsafe fn begin_wipe(state: &mut MacState) {
         backing: NSBackingStoreType::Buffered,
         defer: false
     ];
-    panel.setLevel(1_000);
+    style_popup(&panel);
     panel.setTitle(&NSString::from_str("Blackout"));
     let view_alloc = WipeView::alloc(state.mtm).set_ivars(BindIvars {
         state: state as *mut MacState,
@@ -1554,7 +1760,9 @@ unsafe fn begin_wipe(state: &mut MacState) {
     let view: Retained<WipeView> =
         msg_send![super(view_alloc), initWithFrame: NSRect::new(NSPoint::new(0.0, 0.0), size)];
     panel.setContentView(Some(&view));
+    panel.makeFirstResponder(Some(&view));
     panel.makeKeyAndOrderFront(None);
+    panel.orderFrontRegardless();
     state.wipe = Some(panel);
 }
 
@@ -1574,11 +1782,10 @@ unsafe fn begin_about(state: &mut MacState) {
     }
     if let Some(panel) = &state.about {
         panel.makeKeyAndOrderFront(None);
+        panel.orderFrontRegardless();
         return;
     }
-    let screen = NSScreen::mainScreen(state.mtm)
-        .or_else(|| NSScreen::screens(state.mtm).iter().next().cloned());
-    let Some(screen) = screen else {
+    let Some(screen) = key_screen(state.mtm) else {
         return;
     };
     let visible = screen.visibleFrame();
@@ -1598,7 +1805,7 @@ unsafe fn begin_about(state: &mut MacState) {
         backing: NSBackingStoreType::Buffered,
         defer: false
     ];
-    panel.setLevel(1_000);
+    style_popup(&panel);
     panel.setTitle(&NSString::from_str("Blackout"));
     let view_alloc = AboutView::alloc(state.mtm).set_ivars(BindIvars {
         state: state as *mut MacState,
@@ -1606,7 +1813,9 @@ unsafe fn begin_about(state: &mut MacState) {
     let view: Retained<AboutView> =
         msg_send![super(view_alloc), initWithFrame: NSRect::new(NSPoint::new(0.0, 0.0), size)];
     panel.setContentView(Some(&view));
+    panel.makeFirstResponder(Some(&view));
     panel.makeKeyAndOrderFront(None);
+    panel.orderFrontRegardless();
     state.about = Some(panel);
 }
 
