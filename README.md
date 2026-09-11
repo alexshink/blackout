@@ -170,3 +170,11 @@ sh scripts/macos-app.sh
 ## Лицензия
 
 [MIT](LICENSE).
+
+## Благодарности
+
+Хочу поблагодарить всех, кто помогал в тестировании программы и сборке на других ОС:
+- [Джоконда](https://www.linkedin.com/in/evgeni-shtanko-aa192839a/) (тестирование и сборка на macOS)
+- [Нэйт](https://instagram.com/boortnik) (тестирование на Windows 10)
+- [Yu](https://github.com/yuriylevchuk) (тестирование на Windows 10)
+- Данилос (тестирование на Windows 11)
