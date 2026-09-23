@@ -8,9 +8,9 @@
 
 Оверлей — subclass `NSPanel`, **не** обычный `NSWindow`: `canBecomeKey/Main = false`, borderless + `NonactivatingPanel`, floating, уровень screensaver, мышь не ignore. Collection: все Spaces, fullscreen auxiliary, stationary, не в цикле Cmd-Tab.
 
-Id = `NSScreenNumber`. Курсор — `NSEvent::mouseLocation` против `frame` панелей.
+Id = `NSScreenNumber`. Курсор — `NSEvent::mouseLocation` против живых `NSScreen.frame` (кромки maxX/maxY включительно), без fallback на первый оверлей.
 
-`listen_screens` пустой: смена мониторов подхватится при следующем toggle / явном rebuild, не сразу.
+`applicationDidChangeScreenParameters` → debounce 400 ms (как `WM_DISPLAYCHANGE` на Windows) → если сменились id, `build_overlays` + `restore_after_hotplug`; если только frame — обновить кадры и перерисовать Pick/Locked. Dock-only (`visibleFrame`) не трогает панели. `present` всегда ставит актуальный `NSScreen.frame`. `constrainFrameRect` возвращает запрошенный rect (иначе AppKit режет до `visibleFrame`).
 
 ## Frost / кандидат
 
@@ -50,13 +50,12 @@ Carbon `RegisterEventHotKey`, сигнатура `BLKO`. Toggle id 1; pick-кл�
 ## Не сделано
 
 - Не проверено на железе.
-- Hotplug не живой.
 - Нет single-instance на второй запуск exe.
 - `.app` не собирается сам из `cargo build` — нужен `scripts/macos-app.sh` на Mac.
 
 ## Дальше
 
-- Живой listen `didChangeScreenParametersNotification`.
+- Проверка hotplug / lid / расстановки на живом Mac без рестарта Blackout.
 
 ## Рядом
 

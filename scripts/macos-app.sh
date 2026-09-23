@@ -16,13 +16,19 @@ if [ ! -f "$icns" ]; then
     exit 1
 fi
 
+version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$root/Cargo.toml" | head -n 1)
+if [ -z "$version" ]; then
+    echo "нет version в $root/Cargo.toml" >&2
+    exit 1
+fi
+
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 install -m 0755 "$bin" "$app/Contents/MacOS/blackout"
 ditto "$icns" "$app/Contents/Resources/AppIcon.icns"
 printf 'APPL????' > "$app/Contents/PkgInfo"
 
-cat > "$app/Contents/Info.plist" <<'EOF'
+cat > "$app/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -44,7 +50,7 @@ cat > "$app/Contents/Info.plist" <<'EOF'
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0.0</string>
+    <string>$version</string>
     <key>CFBundleSignature</key>
     <string>????</string>
     <key>CFBundleSupportedPlatforms</key>
@@ -52,7 +58,7 @@ cat > "$app/Contents/Info.plist" <<'EOF'
         <string>MacOSX</string>
     </array>
     <key>CFBundleVersion</key>
-    <string>1.0.0</string>
+    <string>$version</string>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.utilities</string>
     <key>LSMinimumSystemVersion</key>

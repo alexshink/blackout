@@ -45,6 +45,12 @@ define_class!(
         fn can_become_main(&self) -> bool {
             false
         }
+
+        // setFrame goes through this; default shrinks to visibleFrame (menu bar / Dock).
+        #[unsafe(method(constrainFrameRect:toScreen:))]
+        fn constrain_frame_rect(&self, frame_rect: NSRect, _screen: Option<&NSScreen>) -> NSRect {
+            frame_rect
+        }
     }
 );
 
@@ -655,6 +661,16 @@ define_class!(
             unsafe { follow_cursor(&mut *self.ivars().state) }
         }
 
+        #[unsafe(method(applicationDidChangeScreenParameters:))]
+        fn screens_changed(&self, _notification: &NSNotification) {
+            schedule_screen_sync(self);
+        }
+
+        #[unsafe(method(syncScreens:))]
+        fn sync_screens_sel(&self, _sender: Option<&objc2::runtime::AnyObject>) {
+            unsafe { sync_screens(&mut *self.ivars().state) }
+        }
+
         #[unsafe(method(statusLang:))]
         fn status_lang(&self, sender: Option<&objc2::runtime::AnyObject>) {
             unsafe {
@@ -804,7 +820,6 @@ unsafe fn start(delegate: &AppDelegate, state: &mut MacState) {
     build_overlays(mtm, state);
     build_status(mtm, state, delegate);
     install_hotkey(state);
-    listen_screens(mtm, state);
 }
 
 unsafe fn build_overlays(mtm: MainThreadMarker, state: &mut MacState) {
@@ -1021,6 +1036,9 @@ unsafe fn apply(state: &mut MacState, action: Action) {
 }
 
 unsafe fn present(overlay: &mut Overlay, candidate: bool, _pick: bool, style: Style) {
+    if let Some(frame) = live_screen_frame(overlay.panel.mtm(), overlay.display_id) {
+        overlay.frame = frame;
+    }
     overlay.panel.setFrame_display(overlay.frame, true);
     apply_frost(overlay, !candidate && style == Style::Frost);
     overlay.view.setNeedsDisplay(true);
@@ -1231,22 +1249,97 @@ fn key_screen(mtm: MainThreadMarker) -> Option<Retained<NSScreen>> {
 
 fn cursor_display(state: &MacState) -> Option<String> {
     let loc = NSEvent::mouseLocation();
-    state
-        .overlays
+    NSScreen::screens(state.mtm)
         .iter()
-        .find(|o| {
-            loc.x >= o.frame.origin.x
-                && loc.y >= o.frame.origin.y
-                && loc.x < o.frame.origin.x + o.frame.size.width
-                && loc.y < o.frame.origin.y + o.frame.size.height
-        })
-        .map(|o| o.display_id.to_string())
-        .or_else(|| state.overlays.first().map(|o| o.display_id.to_string()))
+        .find(|screen| rect_contains(screen.frame(), loc))
+        .map(|screen| screen_id(&screen).to_string())
 }
 
-unsafe fn listen_screens(mtm: MainThreadMarker, state: &MacState) {
-    let _ = (mtm, state);
-    // NSApplication.didChangeScreenParametersNotification is handled on next toggle/rebuild.
+fn live_screen_frame(mtm: MainThreadMarker, display_id: u32) -> Option<NSRect> {
+    NSScreen::screens(mtm)
+        .iter()
+        .find(|screen| screen_id(screen) == display_id)
+        .map(|screen| screen.frame())
+}
+
+fn rect_contains(frame: NSRect, loc: NSPoint) -> bool {
+    // Inclusive max: the cursor can sit on NSMaxX / NSMaxY (top and right
+    // edges). Half-open [min, max) misses that point; the old
+    // overlays.first() fallback then picked the main screen — the laptop
+    // when the monitor is arranged to the left.
+    loc.x >= frame.origin.x
+        && loc.y >= frame.origin.y
+        && loc.x <= frame.origin.x + frame.size.width
+        && loc.y <= frame.origin.y + frame.size.height
+}
+
+fn rect_eq(a: NSRect, b: NSRect) -> bool {
+    a.origin.x == b.origin.x
+        && a.origin.y == b.origin.y
+        && a.size.width == b.size.width
+        && a.size.height == b.size.height
+}
+
+fn schedule_screen_sync(this: &AppDelegate) {
+    unsafe {
+        let _: () = msg_send![
+            class!(NSObject),
+            cancelPreviousPerformRequestsWithTarget: this,
+            selector: objc2::sel!(syncScreens:),
+            object: None::<&objc2::runtime::AnyObject>
+        ];
+        let _: () = msg_send![
+            this,
+            performSelector: objc2::sel!(syncScreens:),
+            withObject: None::<&objc2::runtime::AnyObject>,
+            afterDelay: 0.4
+        ];
+    }
+}
+
+unsafe fn sync_screens(state: &mut MacState) {
+    let live: Vec<(u32, NSRect)> = NSScreen::screens(state.mtm)
+        .iter()
+        .map(|screen| (screen_id(&screen), screen.frame()))
+        .collect();
+    let ids_changed = live.len() != state.overlays.len()
+        || !state
+            .overlays
+            .iter()
+            .all(|overlay| live.iter().any(|(id, _)| *id == overlay.display_id));
+    if ids_changed {
+        build_overlays(state.mtm, state);
+        let ids: Vec<String> = state
+            .overlays
+            .iter()
+            .map(|overlay| overlay.display_id.to_string())
+            .collect();
+        let action = state.logic.restore_after_hotplug(&ids);
+        apply(state, action);
+        return;
+    }
+
+    let mut frames_changed = false;
+    for overlay in &mut state.overlays {
+        if let Some((_, frame)) = live
+            .iter()
+            .find(|(id, _)| *id == overlay.display_id)
+        {
+            if !rect_eq(overlay.frame, *frame) {
+                overlay.frame = *frame;
+                frames_changed = true;
+            }
+        }
+    }
+    if frames_changed && state.logic.mode != Mode::Idle {
+        let ids: Vec<String> = state
+            .overlays
+            .iter()
+            .map(|overlay| overlay.display_id.to_string())
+            .collect();
+        let action = state.logic.restore_after_hotplug(&ids);
+        apply(state, action);
+    }
 }
 
 unsafe fn install_hotkey(state: &mut MacState) {
