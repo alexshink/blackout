@@ -174,7 +174,8 @@ sh scripts/macos-app.sh
 ## Благодарности
 
 Хочу поблагодарить всех, кто помогал в тестировании программы и сборке на других ОС:
-- [Джоконда](https://www.linkedin.com/in/evgeni-shtanko-aa192839a/) (тестирование и сборка на macOS)
+- [Джоконда](https://www.linkedin.com/in/evgeni-shtanko-aa192839a/) (тестирование и сборка на macOS: M4, `Tahoe 26.1`)
 - [Нэйт](https://instagram.com/boortnik) (тестирование на Windows 10)
-- [Yu](https://github.com/yuriylevchuk) (тестирование на Windows 10)
+- [yur4](https://github.com/yuriylevchuk) (тестирование на Windows 10)
 - Данилос (тестирование на Windows 11)
+- Юля (тестирование на macOS: M2, `Tahoe 26.5.2`)
